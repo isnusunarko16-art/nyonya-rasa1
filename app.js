@@ -105,5 +105,5 @@ HALAMAN.dashboard = async function (el) {
     '<div class="kartu kecil">Dashboard lengkap dibuat di Tahap 4B.</div>';
 };
 
-if (localStorage.getItem(K.tok) && localStorage.getItem(K.api)) tampilApp(); else tampilLogin();
+window.addEventListener('load', () => { if (localStorage.getItem(K.tok) && localStorage.getItem(K.api)) tampilApp(); else tampilLogin(); });
 // AKHIR FILE app.js
