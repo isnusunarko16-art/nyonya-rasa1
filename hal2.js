@@ -383,4 +383,269 @@ HALAMAN.hpp = async function (el) {
 };
 })();
 
+(function () {
+const SAT = {g: ['g', 'kg'], ml: ['ml', 'l'], pcs: ['pcs']};
+const num = n => Number(n).toLocaleString('id-ID', {maximumFractionDigits: 2});
+const pct = n => n == null || !isFinite(n) ? '-' : (Math.round(n * 10) / 10).toLocaleString('id-ID') + '%';
+const br = (a, b, k) => '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0' + (k ? ';font-weight:700;border-top:1px solid var(--l)' : '') + '"><span>' + a + '</span><span style="text-align:right">' + b + '</span></div>';
+const hariIni = () => { const t = new Date(); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); };
+const tg = s => String(s).slice(8, 10) + '/' + String(s).slice(5, 7) + '/' + String(s).slice(0, 4);
+const aktifOk = x => String(x.aktif).toUpperCase() !== 'FALSE';
+const FOTO = {};
+const SUM = {resep: 'Resep diubah', harga_jual: 'Harga jual diubah', pembelian: 'Harga bahan berubah (pembelian)',
+  pembatalan: 'Pembatalan pembelian', produksi: 'Produksi'};
+
+// Perbaikan bentuk jawaban hitungHPP (server memakai nama "rincian")
+const apiLama = api;
+api = function (aksi, data) {
+  return apiLama(aksi, data).then(h => {
+    if (aksi === 'hitungHPP' && h && !h.baris && h.rincian) h.baris = h.rincian;
+    return h;
+  });
+};
+
+const css = document.createElement('style');
+css.textContent = '.pg{display:flex;gap:12px;align-items:center;padding:12px 0;border-top:1px solid var(--l);cursor:pointer}' +
+  '.ava{flex:0 0 46px;height:46px;border-radius:12px;background:var(--m);color:#fff;display:flex;align-items:center;justify-content:center;font-family:Georgia,serif;font-size:20px}' +
+  '.pg .n{font-weight:600}.pg .s{font-size:12px;color:var(--s)}' +
+  '.foto{width:100%;height:210px;object-fit:cover;border-radius:12px;background:var(--l);display:block}' +
+  '.tag{font-size:11px;border-radius:8px;padding:2px 8px;background:var(--l);color:var(--s);white-space:nowrap}' +
+  '.btnk{background:none;border:1px solid var(--er);color:var(--er);border-radius:10px;padding:6px 10px;font-size:12px;margin-top:4px}';
+document.head.appendChild(css);
+
+function kecilkan(file) {
+  return new Promise((ok, gagal) => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = () => {
+      const s = Math.min(1, 800 / Math.max(im.width, im.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(im.width * s); c.height = Math.round(im.height * s);
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      let q = 0.8, d = c.toDataURL('image/jpeg', q);
+      while (d.length * 0.75 > 330000 && q > 0.3) { q -= 0.1; d = c.toDataURL('image/jpeg', q); }
+      ok(d);
+    };
+    im.onerror = () => gagal(new Error('Foto tidak bisa dibaca. Coba foto lain (JPG atau PNG).'));
+    im.src = url;
+  });
+}
+
+async function batal(jenis, id, ulang) {
+  const alasan = prompt('Alasan pembatalan:');
+  if (!alasan || !alasan.trim()) return;
+  try { await api('batalkan', {jenis: jenis, id: id, alasan: alasan.trim()}); toast('Dibatalkan'); ulang(); }
+  catch (e) { toast(e.message); }
+}
+function riwayat(jenis, kotak, baris, ulang) {
+  api('daftarTransaksi', {jenis: jenis, limit: 20}).then(L => {
+    const k = $(kotak); if (!k) return;
+    k.innerHTML = L.length ? L.map(baris).join('') : '<p class="kecil">Belum ada data.</p>';
+    k.onclick = e => { const b = e.target.closest('[data-batal]'); if (b) batal(jenis, b.dataset.batal, ulang); };
+  }).catch(e => { const k = $(kotak); if (k) k.innerHTML = '<p class="kecil">' + esc(e.message) + '</p>'; });
+}
+const rw = (judul, sub, nominal, x) => {
+  const bat = x.status === 'batal';
+  return '<div style="padding:8px 0;border-top:1px solid var(--l);' + (bat ? 'opacity:.55' : '') + '"><div style="display:flex;justify-content:space-between;gap:10px">' +
+    '<span><b>' + judul + '</b><br><span class="kecil">' + sub + '</span></span><span style="text-align:right">' + nominal +
+    (bat ? '<br><span class="tag">dibatalkan</span>' : '<br><button class="btnk" data-batal="' + x.id + '">Batalkan</button>') + '</span></div></div>';
+};
+const notif = (j, t) => '<div class="kartu" style="border-color:var(--g)"><b>✓ ' + j + '</b><p class="kecil" style="margin:6px 0 0">' + t + '</p></div>';
+
+// ================= PRODUK =================
+async function daftar(el) {
+  const a = await api('ambilAwal');
+  const kat = {}; a.kategori.forEach(k => kat[k.id] = k.nama);
+  el.innerHTML = '<input id="cari" type="search" placeholder="Cari produk…" value="' + esc(window._pq || '') + '">' +
+    '<label style="display:flex;gap:8px;align-items:center;margin:10px 0"><input type="checkbox" id="non" style="width:auto"' + (window._pn ? ' checked' : '') + '> Tampilkan produk nonaktif</label>' +
+    '<div class="kartu" id="dp"></div><button class="tombol" id="baru">+ Produk baru (hitung HPP)</button>';
+  const isi = () => {
+    window._pq = $('#cari').value; window._pn = $('#non').checked;
+    const t = window._pq.trim().toLowerCase();
+    const L = a.produk.filter(p => (window._pn || aktifOk(p)) && String(p.nama).toLowerCase().indexOf(t) >= 0);
+    $('#dp').innerHTML = L.length ? L.map(p => {
+      const hj = Number(p.harga_jual) || 0, h = Number(p.hpp_terbaru) || 0, m = hj > 0 && h > 0 ? (hj - h) / hj * 100 : null;
+      return '<div class="pg" data-id="' + p.id + '"><div class="ava">' + esc(String(p.nama).charAt(0).toUpperCase()) + '</div>' +
+        '<div style="flex:1;min-width:0"><div class="n">' + esc(p.nama) + (aktifOk(p) ? '' : ' <span class="tag">nonaktif</span>') + '</div>' +
+        '<div class="s">' + esc(kat[p.kategori_id] || '-') + ' · Stok ' + num(p.stok) + '</div>' +
+        '<div class="s">HPP ' + rp(h) + ' · Margin ' + pct(m) + '</div></div>' +
+        '<div style="text-align:right;font-weight:700;color:var(--m)">' + rp(hj) + '</div></div>';
+    }).join('') : '<p class="kecil">Belum ada produk. Buat produk pertama lewat tab HPP.</p>';
+  };
+  isi();
+  $('#cari').oninput = isi; $('#non').onchange = isi;
+  $('#dp').onclick = e => { const r = e.target.closest('.pg'); if (r) detail(el, r.dataset.id).catch(x => toast(x.message)); };
+  $('#baru').onclick = () => buka('hpp');
+}
+
+async function detail(el, id) {
+  const a = await api('ambilAwal');
+  const p = a.produk.find(x => x.id === id);
+  if (!p) return daftar(el);
+  const K = a.kategori.filter(k => k.jenis === 'produk' && (aktifOk(k) || k.id === p.kategori_id));
+  const kat = K.find(k => k.id === p.kategori_id);
+  const hj = Number(p.harga_jual) || 0, h = Number(p.hpp_terbaru) || 0, laba = hj - h, on = aktifOk(p);
+  el.innerHTML = '<button class="tautan" id="kembali" style="text-align:left;margin:0 0 8px">‹ Daftar produk</button>' +
+    '<div class="kartu"><img id="ft" class="foto" alt="" hidden><div id="ph" class="foto" style="display:flex;align-items:center;justify-content:center;color:var(--s)">' +
+    (p.foto_url ? 'Memuat foto…' : 'Belum ada foto') + '</div>' +
+    '<input type="file" id="fi" accept="image/*" hidden><button class="tautan" id="gf">' + (p.foto_url ? 'Ganti foto' : 'Tambah foto') + '</button></div>' +
+    '<div class="kartu"><h2>' + esc(p.nama) + (on ? '' : ' <span class="tag">nonaktif</span>') + '</h2>' +
+    br('Kategori', esc(kat ? kat.nama : '-')) + br('Harga jual', rp(hj)) + br('HPP terbaru', rp(h)) +
+    br('Laba per unit', rp(laba), 1) + br('Margin', pct(hj > 0 && h > 0 ? laba / hj * 100 : null)) +
+    br('Markup', pct(h > 0 ? laba / h * 100 : null)) + br('Stok produk jadi', num(p.stok)) +
+    br('Nilai stok', rp((Number(p.stok) || 0) * (Number(p.hpp_stok) || h))) + '</div>' +
+    '<div class="kartu"><h2>Edit produk</h2><label>Nama</label><input id="en" value="' + esc(p.nama) + '">' +
+    '<label>Kategori</label><select id="ek">' + K.map(k => '<option value="' + k.id + '"' + (k.id === p.kategori_id ? ' selected' : '') + '>' + esc(k.nama) + '</option>').join('') + '</select>' +
+    '<label>Harga jual (Rp)</label><input id="eh" type="number" inputmode="decimal" value="' + (hj || '') + '">' +
+    '<button class="tombol" id="se">Simpan perubahan</button>' +
+    '<button class="tautan" id="na" style="color:var(--er)">' + (on ? 'Nonaktifkan produk' : 'Aktifkan kembali produk') + '</button></div>' +
+    '<div class="kartu" id="rh"><b>Riwayat HPP &amp; harga jual</b><p class="kecil">Memuat…</p></div>';
+  $('#kembali').onclick = () => daftar(el).catch(x => toast(x.message));
+
+  const tampilFoto = d => { $('#ft').src = d; $('#ft').hidden = false; $('#ph').hidden = true; };
+  if (p.foto_url) {
+    if (FOTO[p.foto_url]) tampilFoto(FOTO[p.foto_url]);
+    else api('ambilFoto', {id: p.foto_url}).then(d => { FOTO[p.foto_url] = d; if ($('#ft')) tampilFoto(d); })
+      .catch(() => { if ($('#ph')) $('#ph').textContent = 'Foto tidak bisa dimuat'; });
+  }
+  $('#gf').onclick = () => $('#fi').click();
+  $('#fi').onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      toast('Mengunggah foto…');
+      const d = await kecilkan(f);
+      const r = await api('unggahFoto', {produk_id: id, base64: d.split(',')[1]});
+      FOTO[r.foto_url] = d; tampilFoto(d); toast('Foto tersimpan');
+    } catch (x) { toast(x.message); }
+  };
+  $('#se').onclick = async () => {
+    try {
+      await api('simpanProduk', {id: id, nama: $('#en').value, kategori_id: $('#ek').value, harga_jual: $('#eh').value, aktif: on});
+      toast('Tersimpan'); detail(el, id).catch(x => toast(x.message));
+    } catch (x) { toast(x.message); }
+  };
+  $('#na').onclick = async () => {
+    if (!confirm(on ? 'Nonaktifkan produk ini? Riwayat tetap tersimpan.' : 'Aktifkan kembali produk ini?')) return;
+    try {
+      await api('simpanProduk', {id: id, nama: p.nama, kategori_id: p.kategori_id, harga_jual: p.harga_jual, aktif: !on});
+      toast(on ? 'Produk dinonaktifkan' : 'Produk diaktifkan'); detail(el, id).catch(x => toast(x.message));
+    } catch (x) { toast(x.message); }
+  };
+  api('daftarTransaksi', {jenis: 'hpp', limit: 500}).then(L => {
+    const k = $('#rh'); if (!k) return;
+    const R = L.filter(x => x.produk_id === id).slice(0, 30);
+    k.innerHTML = '<b>Riwayat HPP &amp; harga jual</b>' + (R.length ? R.map(x =>
+      br(tg(x.waktu) + '<br><span class="kecil">' + (SUM[x.sumber] || esc(x.sumber)) + '</span>',
+        'HPP ' + rp(x.hpp_unit) + '<br><span class="kecil">Jual ' + rp(x.harga_jual) + '</span>')).join('') : '<p class="kecil">Belum ada riwayat.</p>');
+  }).catch(x => { const k = $('#rh'); if (k) k.innerHTML = '<b>Riwayat HPP</b><p class="kecil">' + esc(x.message) + '</p>'; });
+}
+HALAMAN.produk = function (el) { return daftar(el); };
+
+// ================= PEMBELIAN =================
+HALAMAN.pembelian = async function (el, pesan) {
+  const a = await api('ambilAwal');
+  const B = a.bahan.filter(aktifOk), S = a.supplier.filter(aktifOk), nb = {};
+  a.bahan.forEach(b => nb[b.id] = b);
+  if (!B.length) { el.innerHTML = '<div class="kartu">Isi dulu bahan di menu ☰ → Bahan Baku.</div>'; return; }
+  el.innerHTML = (pesan || '') + '<div class="kartu"><h2>Catat pembelian</h2>' +
+    '<label>Tanggal</label><input id="bt" type="date" value="' + hariIni() + '">' +
+    '<label>Bahan</label><select id="bb">' + B.map(b => '<option value="' + b.id + '">' + esc(b.nama) + '</option>').join('') + '</select>' +
+    '<div class="kecil" id="bi" style="margin-top:6px"></div>' +
+    '<div style="display:flex;gap:8px"><div style="flex:1"><label>Jumlah</label><input id="bq" type="number" inputmode="decimal"></div>' +
+    '<div style="flex:1"><label>Satuan</label><select id="bu"></select></div></div>' +
+    '<label>Harga per satuan di atas (Rp)</label><input id="bh" type="number" inputmode="decimal">' +
+    '<div style="display:flex;justify-content:space-between;margin-top:12px;padding:10px 12px;background:var(--c);border-radius:10px"><span>Total pembelian</span><b id="bto">Rp 0</b></div>' +
+    '<label>Supplier</label><select id="bs"><option value="">(tanpa supplier)</option>' + S.map(s => '<option value="' + s.id + '">' + esc(s.nama) + '</option>').join('') +
+    '<option value="_baru">+ Supplier baru…</option></select><input id="bsn" placeholder="Nama supplier baru" style="margin-top:8px" hidden>' +
+    '<label>Metode pembayaran</label><select id="bm"><option value="tunai">Tunai</option><option value="transfer">Transfer</option><option value="qris">QRIS</option></select>' +
+    '<label>Catatan (opsional)</label><input id="bc"><button class="tombol" id="bsv">Simpan pembelian</button></div>' +
+    '<div class="kartu"><b>Pembelian terakhir</b><div id="rw"><p class="kecil">Memuat…</p></div></div>';
+  const info = () => {
+    const b = nb[$('#bb').value];
+    $('#bu').innerHTML = (SAT[b.satuan_dasar] || [b.satuan_dasar]).map(u => '<option>' + u + '</option>').join('');
+    $('#bi').textContent = 'Stok sekarang ' + num(b.stok) + ' ' + b.satuan_dasar + ' · harga rata-rata Rp ' + num(b.harga_rata2) + ' per ' + b.satuan_dasar;
+  };
+  const total = () => { $('#bto').textContent = rp((Number($('#bq').value) || 0) * (Number($('#bh').value) || 0)); };
+  info();
+  $('#bb').onchange = info; $('#bq').oninput = total; $('#bh').oninput = total;
+  $('#bs').onchange = e => { $('#bsn').hidden = e.target.value !== '_baru'; };
+  $('#bsv').onclick = async () => {
+    const btn = $('#bsv'); btn.disabled = true;
+    try {
+      let sup = $('#bs').value;
+      if (sup === '_baru') {
+        const nm = $('#bsn').value.trim();
+        if (!nm) throw new Error('Isi nama supplier baru.');
+        sup = (await api('simpanSupplier', {nama: nm})).id;
+      }
+      const r = await api('simpanPembelian', {tanggal: $('#bt').value, bahan_id: $('#bb').value, supplier_id: sup, satuan: $('#bu').value,
+        qty: $('#bq').value, harga_satuan: $('#bh').value, metode: $('#bm').value, catatan: $('#bc').value});
+      toast('Pembelian tersimpan');
+      await HALAMAN.pembelian(el, notif('Pembelian tersimpan', 'Total ' + rp(r.total) + '. Stok sekarang ' + num(r.stok) + ', harga rata-rata Rp ' + num(r.harga_rata2) + ' per satuan dasar.'));
+      window.scrollTo(0, 0);
+      return;
+    } catch (e) { toast(e.message); }
+    btn.disabled = false;
+  };
+  riwayat('pembelian', '#rw', x => { const b = nb[x.bahan_id];
+    return rw(esc(b ? b.nama : x.bahan_id), tg(x.tanggal) + ' · ' + num(x.qty_dasar) + ' ' + (b ? b.satuan_dasar : '') + ' · ' + esc(x.metode), rp(x.total), x); },
+    () => HALAMAN.pembelian(el).catch(x => toast(x.message)));
+};
+
+// ================= PRODUKSI =================
+HALAMAN.produksi = async function (el, pesan) {
+  const a = await api('ambilAwal');
+  const P = a.produk.filter(aktifOk), nb = {}, np = {};
+  a.bahan.forEach(b => nb[b.id] = b); a.produk.forEach(p => np[p.id] = p);
+  if (!P.length) { el.innerHTML = '<div class="kartu">Belum ada produk. Buat dulu di tab HPP, lengkap dengan resepnya.</div>'; return; }
+  const RC = {};
+  el.innerHTML = (pesan || '') + '<div class="kartu"><h2>Catat produksi</h2>' +
+    '<label>Tanggal</label><input id="pt" type="date" value="' + hariIni() + '">' +
+    '<label>Produk</label><select id="pr">' + P.map(p => '<option value="' + p.id + '">' + esc(p.nama) + '</option>').join('') + '</select>' +
+    '<label>Jumlah produk jadi</label><input id="pj" type="number" inputmode="decimal">' +
+    '<div id="pv" style="margin-top:10px"></div><button class="tombol" id="psv">Simpan produksi</button></div>' +
+    '<div class="kartu"><b>Produksi terakhir</b><div id="rw"><p class="kecil">Memuat…</p></div></div>';
+  let tk = 0;
+  const preview = async () => {
+    const id = $('#pr').value, n = Number($('#pj').value), o = $('#pv'), t = ++tk;
+    try {
+      if (!RC[id]) { o.innerHTML = '<p class="kecil">Memuat resep…</p>'; RC[id] = await api('ambilResep', {produk_id: id}); }
+    } catch (e) { o.innerHTML = '<div class="galat">' + esc(e.message) + '</div>'; return; }
+    if (t !== tk) return;
+    const r = RC[id];
+    if (!r.baris || !r.baris.length) { o.innerHTML = '<div class="galat">Produk ini belum punya resep. Isi dulu di tab HPP.</div>'; return; }
+    if (!(n > 0)) { o.innerHTML = '<p class="kecil">Isi jumlah produk jadi untuk melihat kebutuhan bahan.</p>'; return; }
+    const hasil = Number(r.rincian.hasil) || 1;
+    let kurang = 0;
+    const rows = r.baris.map(x => {
+      const b = nb[x.bahan_id] || {nama: x.bahan_id, stok: 0, satuan_dasar: x.satuan};
+      const perlu = x.qty / hasil * n, stok = Number(b.stok) || 0, ok = stok + 1e-9 >= perlu;
+      if (!ok) kurang++;
+      return br(esc(b.nama) + '<br><span class="kecil">Stok ' + num(stok) + ' ' + b.satuan_dasar + '</span>',
+        '<span style="' + (ok ? '' : 'color:var(--er);font-weight:700') + '">' + num(perlu) + ' ' + b.satuan_dasar + (ok ? '' : '<br>kurang ' + num(perlu - stok)) + '</span>');
+    }).join('');
+    o.innerHTML = '<div class="kartu" style="background:var(--c)"><b>Kebutuhan bahan</b>' + rows +
+      br('Perkiraan biaya produksi', rp(r.rincian.hpp_unit * n), 1) + br('Perkiraan HPP per unit', rp(r.rincian.hpp_unit)) +
+      '<div class="kecil">Biaya sebenarnya memakai harga rata-rata bahan saat produksi disimpan.</div></div>' +
+      (kurang ? '<div class="galat">' + kurang + ' bahan tidak cukup. Catat pembelian dulu.</div>' : '');
+  };
+  $('#pr').onchange = preview; $('#pj').oninput = preview;
+  preview();
+  $('#psv').onclick = async () => {
+    const btn = $('#psv'); btn.disabled = true;
+    try {
+      const r = await api('simpanProduksi', {tanggal: $('#pt').value, produk_id: $('#pr').value, jumlah_jadi: $('#pj').value});
+      toast('Produksi tersimpan');
+      await HALAMAN.produksi(el, notif('Produksi tersimpan', 'Total biaya ' + rp(r.total_biaya) + ', HPP aktual Rp ' + num(r.hpp_unit) + ' per unit. Stok produk jadi sekarang ' + num(r.stok_produk) + '.'));
+      window.scrollTo(0, 0);
+      return;
+    } catch (e) { toast(e.message); }
+    btn.disabled = false;
+  };
+  riwayat('produksi', '#rw', x => { const p = np[x.produk_id];
+    return rw(esc(p ? p.nama : x.produk_id), tg(x.tanggal) + ' · ' + num(x.jumlah_jadi) + ' jadi · HPP Rp ' + num(x.hpp_unit), rp(x.total_biaya), x); },
+    () => HALAMAN.produksi(el).catch(x => toast(x.message)));
+};
+})();
+
 // AKHIR FILE hal2.js
