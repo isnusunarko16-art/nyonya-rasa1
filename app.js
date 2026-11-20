@@ -1,6 +1,6 @@
 const K = {api: 'nr_api', tok: 'nr_token', usr: 'nr_user'};
 const $ = s => document.querySelector(s);
-const HALAMAN = {};
+const HALAMAN = {}; let aktif = '';
 const JUDUL = {dashboard: 'Dashboard', produk: 'Produk', hpp: 'Kalkulator HPP', transaksi: 'Transaksi', laporan: 'Laporan',
   bahan: 'Bahan Baku', pembelian: 'Pembelian', produksi: 'Produksi', pengeluaran: 'Pengeluaran', supplier: 'Supplier & Kategori', pengaturan: 'Pengaturan'};
 const MENU = [['bahan', 'Bahan Baku'], ['pembelian', 'Pembelian Bahan'], ['produksi', 'Produksi'], ['pengeluaran', 'Pengeluaran'],
@@ -72,7 +72,7 @@ $('#formLogin').onsubmit = async ev => {
 
 async function buka(nama) {
   if (!JUDUL[nama]) nama = 'dashboard';
-  location.hash = nama;
+    aktif = nama; location.hash = nama;
   $('#judul').textContent = JUDUL[nama];
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('aktif', a.dataset.h === nama));
   const el = $('#isi'); window.scrollTo(0, 0);
@@ -83,7 +83,7 @@ async function buka(nama) {
     if (localStorage.getItem(K.tok)) el.innerHTML = '<div class="kartu"><div class="galat">' + esc(e.message) + '</div><button class="tombol" onclick="buka(\'' + nama + '\')">Coba lagi</button></div>';
   }
 }
-window.addEventListener('hashchange', () => { if (!$('#aplikasi').hidden) buka(location.hash.slice(1)); });
+window.addEventListener('hashchange', () => { if (!$('#aplikasi').hidden && location.hash.slice(1) !== aktif) buka(location.hash.slice(1)); });
 
 $('#daftarMenu').innerHTML = MENU.map(m => '<button data-h="' + m[0] + '">' + m[1] + '</button>').join('') +
   '<button class="keluar" id="btnKeluar">Keluar</button>';
