@@ -1,0 +1,10 @@
+{
+  "name": "Nyonya Rasa",
+  "short_name": "Nyonya Rasa",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F6F2EA",
+  "theme_color": "#6B1E2E"
+}
